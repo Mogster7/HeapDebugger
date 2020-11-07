@@ -1,14 +1,12 @@
 // Jonathan Bourim, Project 2
-#include "Common.h"
 #include "MemoryDebugger.h"
 #include <new>
 #include <type_traits>
 
 #define NOMINMAX
-#include <Windows.h>
+#include <windows.h>
 #include <cstdio>
-#include <DbgHelp.h>
-#include <fstream>
+#include <dbghelp.h>
 
 #pragma region ContextGetter
 #pragma comment( lib, "dbghelp" )
@@ -119,6 +117,7 @@ void GetSymbolsFromAddress(DWORD64 address, SymbolInfo& symRef)
 
 	if (result)
 	{
+		// Update symbol
 		symRef.lineNumber = line.LineNumber;
 		symRef.fileName = line.FileName;
 	}
@@ -185,10 +184,12 @@ Nurgle::~Nurgle()
 
 	LogLeaks();
 
+	// Place all allocated data into deallocated set for freeing
 	for(auto& allocation : mAllocated)
 		mDeallocated.emplace_back(allocation.second);
 	mAllocated.clear();
 
+	// Free all data
 	for (const auto& deallocation : mDeallocated)
 	{
 		VirtualFree(deallocation.pageBase, 0, MEM_RELEASE);
@@ -198,8 +199,9 @@ Nurgle::~Nurgle()
 }
 
 
-DWORD64 GetCallingFunctionAddress(unsigned backtraceDepth)
+size_t GetCallingFunctionAddress(unsigned backtraceDepth)
 {
+	// Get context and fill stack frame
 	CONTEXT context;
 	GET_CONTEXT(context);
 
@@ -222,7 +224,7 @@ DWORD64 GetCallingFunctionAddress(unsigned backtraceDepth)
 		);
 	}
 
-	return stack_frame.AddrPC.Offset;
+	return static_cast<size_t>(stack_frame.AddrPC.Offset);
 }
 
 

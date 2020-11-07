@@ -1,10 +1,9 @@
 // Jonathan Bourim, Project 2
-#pragma once
+#ifndef MEMORY_DEBUGGER
+#define MEMORY_DEBUGGER
 
 #include "Common.h"
 #include <vector>
-#include <basetsd.h>
-#include <numeric>
 #include <unordered_map>
 
 // i named my memory debugger after that stinky god in warhammer that makes you immortal
@@ -20,7 +19,7 @@ struct Nurgle
 
 		void* address = nullptr;
 		size_t size = 0;
-		DWORD64 callingFunctionAddress = 0;
+		size_t callingFunctionAddress = 0;
 		void* pageBase = nullptr;
 		size_t pageBaseSize = 0;
 		void* pageOverflow = nullptr;
@@ -50,15 +49,17 @@ static struct NurgleInitializer
 
 
 void* operator new(size_t size);
-void *operator new(size_t size, const std::nothrow_t &) noexcept;
+void* operator new(size_t size, const std::nothrow_t&) noexcept;
 
-void *operator new[](size_t size);
-void *operator new[](size_t size, const std::nothrow_t &) noexcept;
+void* operator new[](size_t size);
+void* operator new[](size_t size, const std::nothrow_t&) noexcept;
 
-void operator delete(void* ptr) noexcept;
-void operator delete(void *ptr, size_t) noexcept;
-void operator delete(void *ptr, const std::nothrow_t &) noexcept;
+void operator delete(void* address) noexcept;
+void operator delete(void* address, size_t) noexcept;
+void operator delete(void* address, const std::nothrow_t&) noexcept;
 
-void operator delete[](void *ptr) noexcept;
-void operator delete[](void *ptr, size_t) noexcept;
-void operator delete[](void *ptr, const std::nothrow_t &) noexcept;
+void operator delete[](void* address) noexcept;
+void operator delete[](void* address, size_t) noexcept;
+void operator delete[](void* address, const std::nothrow_t&) noexcept;
+
+#endif
