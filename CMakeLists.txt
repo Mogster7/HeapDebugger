@@ -161,6 +161,7 @@ add_executable(HeapDebugger ${SRCFILES} ${TARGET_SRCFILES})
 # set VS startup project
 if(MSVC)
   set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT HeapDebugger)
+  target_link_libraries(HeapDebugger dbghelp)
 endif(MSVC)
 
 ##########################################################################################
