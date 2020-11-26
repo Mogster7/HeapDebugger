@@ -18,7 +18,7 @@ struct SymbolInfo
 };
 
 constexpr size_t SIZE_PAGE = 4096;
-constexpr size_t BUFFER_SIZE = 1024;
+constexpr size_t BUFFER_SIZE = 2048;
 
 // Allocator initialization assistance
 static int nurgleCounter;
@@ -44,17 +44,26 @@ void GetSymbolsFromAddress(void* address, SymbolInfo& symRef)
     Basic_String traceInfo(strings[0]);
     free(strings);
 
-    char offset[BUFFER_SIZE] = {0};
     // Find the offset bytes that is inside traceInfo
-    size_t offsetStart = traceInfo.find('[');
-    size_t offsetEnd = traceInfo.find(']', offsetStart);
+    char offset[BUFFER_SIZE] = {0};
+
+    // Wrap this in an ifdef because backtrace_symbols returns differently for GCC/Clang
+#ifdef __clang__
+    char delimiterStart = '[';
+    char delimiterEnd = ']';
+#else
+    char delimiterStart = '(';
+    char delimiterEnd = ')';
+#endif
+    size_t offsetStart = traceInfo.find(delimiterStart);
+    size_t offsetEnd = traceInfo.find(delimiterEnd, offsetStart);
     memcpy(offset, &traceInfo[offsetStart + 1], offsetEnd - offsetStart - 1);
 
     int p = 0;
     while(traceInfo[p] != '(' && traceInfo[p] != ' ' && traceInfo[p] != 0) {
         ++p;
     }
-    char syscom[BUFFER_SIZE];
+    char syscom[BUFFER_SIZE * 2];
 
     // Get all of the associated data from the addr2line
     sprintf(syscom,"addr2line -f -a -C -e %.*s %s", p, traceInfo.c_str(), offset);
@@ -160,12 +169,6 @@ Nurgle::~Nurgle()
 }
 
 
-void* GetCallingFunctionAddress(const int backtraceDepth)
-{
-    return __builtin_return_address(0);
-}
-
-
 void* Nurgle::Allocate(size_t size, Allocation::TYPE allocationType = Allocation::TYPE::SCALAR, bool throwException = false)
 {
     // Match signed version of size_t
@@ -191,7 +194,8 @@ void* Nurgle::Allocate(size_t size, Allocation::TYPE allocationType = Allocation
 	char* byteAddr = static_cast<char*>(basePtr);
 	// Allocate single extra page for overflow
 	void* overflowPtr = static_cast<void*>(byteAddr + (numPages * SIZE_PAGE));
-	mprotect(overflowPtr, SIZE_PAGE, PROT_NONE);
+    // Protect the last page to be non read-write
+    mprotect(overflowPtr, SIZE_PAGE, PROT_NONE);
 	void* clientPtr = byteAddr + (numPages * SIZE_PAGE) - size;
 
 	Allocation alloc;
@@ -202,6 +206,7 @@ void* Nurgle::Allocate(size_t size, Allocation::TYPE allocationType = Allocation
 	alloc.pageOverflow = overflowPtr;
 	alloc.allocationType = allocationType;
 
+	// Backtrack up by 1 and get the return address of that as the caller
 	alloc.callingFunctionAddress = __builtin_return_address(1);
 
 	nurgle.mAllocated[clientPtr] = alloc;
