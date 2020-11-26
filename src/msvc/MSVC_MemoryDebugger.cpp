@@ -158,7 +158,7 @@ void Nurgle::LogLeaks()
 
 	for (const auto& alloc : mAllocated)
 	{
-		GetSymbolsFromAddress(alloc.second.callingFunctionAddress, symbolInfo);
+		GetSymbolsFromAddress(reinterpret_cast<DWORD64>(alloc.second.callingFunctionAddress), symbolInfo);
 		Basic_String fileName = symbolInfo.fileName;
 		Basic_String strippedFileName = fileName.substr(fileName.substr(0, fileName.find_last_of("\\")).find_last_of("\\") + 1);
 		
@@ -169,7 +169,7 @@ void Nurgle::LogLeaks()
 		// Line number
 		fprintf(fp, "%d, ", symbolInfo.lineNumber);
 		// Allocation size
-		fprintf(fp, "%llu, ", alloc.second.size);
+		fprintf(fp, "%zu, ", alloc.second.size);
 		// Allocation address
 		fprintf(fp, "0x%p, ", alloc.second.address);
 		// Function name
@@ -199,7 +199,7 @@ Nurgle::~Nurgle()
 }
 
 
-size_t GetCallingFunctionAddress(unsigned backtraceDepth)
+void* GetCallingFunctionAddress(unsigned backtraceDepth)
 {
 	// Get context and fill stack frame
 	CONTEXT context;
@@ -224,13 +224,14 @@ size_t GetCallingFunctionAddress(unsigned backtraceDepth)
 		);
 	}
 
-	return static_cast<size_t>(stack_frame.AddrPC.Offset);
+	return reinterpret_cast<void*>(stack_frame.AddrPC.Offset);
 }
 
 
 void* Nurgle::Allocate(size_t size, Allocation::TYPE allocationType = Allocation::TYPE::SCALAR, bool throwException = false)
 {
-	if (size >= static_cast<size_t>(std::numeric_limits<long long>::max()))
+    // Match signed version of size_t
+	if (size >= std::numeric_limits<size_t>::max() / 2)
 	{
 		// Size greater than acceptable allocation limit
 		if (throwException)

@@ -5,6 +5,9 @@
 #include "Common.h"
 #include <vector>
 #include <unordered_map>
+template <typename T1, typename T2>
+using AllocationMap = std::unordered_map<T1, T2, std::hash<T1>, std::equal_to<>, Mallocator<std::pair<const T1, T2>>>;
+
 
 // i named my memory debugger after that stinky god in warhammer that makes you immortal
 struct Nurgle
@@ -19,13 +22,12 @@ struct Nurgle
 
 		void* address = nullptr;
 		size_t size = 0;
-		size_t callingFunctionAddress = 0;
+		void* callingFunctionAddress = 0;
 		void* pageBase = nullptr;
 		size_t pageBaseSize = 0;
 		void* pageOverflow = nullptr;
 		TYPE allocationType = TYPE::SCALAR;
 	};
-
 
 	void* Allocate(size_t size, Allocation::TYPE allocationType, bool throwException);
 	void Deallocate(void* address, Allocation::TYPE allocationType);
@@ -33,8 +35,6 @@ struct Nurgle
 private:
 	void LogLeaks();
 
-	template <typename T1, typename T2>
-	using AllocationMap = std::unordered_map<T1, T2, std::hash<T1>, std::equal_to<>, Mallocator<std::pair<const T1, T2>>>;
 
 	AllocationMap<void*, Allocation> mAllocated;
 	std::vector<Allocation, Mallocator<Allocation>> mDeallocated;

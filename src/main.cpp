@@ -5,7 +5,7 @@
 // IE: project2.exe 5
 int main(int argc, char *argv[])
 {
-	int scenario = 2; // Or change this line to pick a scenario
+	int scenario = 10; // Or change this line to pick a scenario
 
 	// Test Harness
 	//======== BEGIN: DO NOT MODIFY THE FOLLOWING LINES =========//
@@ -27,7 +27,6 @@ int main(int argc, char *argv[])
 	/**/	default: project2_good(); break;                   /**/
 	/**/}                                                      /**/
 	//========  END: DO NOT MODIFY THE PREVIOUS LINES ===========//
-	std::cout << "BALLS" << std::endl;
 
 	return 0;
 }

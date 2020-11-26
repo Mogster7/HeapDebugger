@@ -14,7 +14,6 @@ typedef std::basic_string<char, std::char_traits<char>, Mallocator<char>> Basic_
 
 // if we are compiling with MSVC/Windows
 #if defined (_MSC_VER)
-
 #include <intrin.h>  // for _ReturnAddress()
 #pragma intrinsic(_ReturnAddress)
 

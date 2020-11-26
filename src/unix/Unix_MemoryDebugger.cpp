@@ -1,152 +1,116 @@
-// Jonathan Bourim, Project 2
+// Jonathan Bourim, Project 2 - Part 2
 #include "MemoryDebugger.h"
 #include <new>
 #include <type_traits>
-
 #include <cstdio>
+#include <cstring>
+#include <sys/mman.h>
+#include <errno.h>
+#include <algorithm>
+#include <execinfo.h>
 
-#pragma region ContextGetter
-#pragma comment( lib, "dbghelp" )
+// Symbol info for reading line/function data of where error was found
+struct SymbolInfo
+{
+    Basic_String fileName = "";
+    Basic_String functionName = "";
+    int lineNumber = 0;
+};
 
-#if defined(_M_AMD64)
-// x64
-#define GET_CONTEXT(c) \
-	do { \
-		RtlCaptureContext(&(c)); \
-	} while(0)
-
-void FillStackFrame(STACKFRAME64& stack_frame, const CONTEXT& context) {
-	stack_frame.AddrPC.Mode = AddrModeFlat;
-	stack_frame.AddrPC.Offset = context.Rip;
-	stack_frame.AddrStack.Mode = AddrModeFlat;
-	stack_frame.AddrStack.Offset = context.Rsp;
-	stack_frame.AddrFrame.Mode = AddrModeFlat;
-	stack_frame.AddrFrame.Offset = context.Rbp;
-}
-
-#define IMAGE_FILE_MACHINE_CURRENT IMAGE_FILE_MACHINE_AMD64
-// x64
-#elif defined(_M_IX86)
-// This only works for x86
-// For x64, use RtlCaptureContext()
-// See: http://jpassing.wordpress.com/2008/03/12/walking-the-stack-of-the-current-thread/
-__declspec(naked) DWORD _stdcall GetEIP() {
-	_asm {
-		mov eax, dword ptr[esp]
-		ret
-	};
-}
-
-__declspec(naked) DWORD _stdcall GetESP() {
-	_asm {
-		mov eax, esp
-		ret
-	};
-}
-
-__declspec(naked) DWORD _stdcall GetEBP() {
-	_asm {
-		mov eax, ebp
-		ret
-	};
-}
-
-// Capture the context at the current location for the current thread
-// This is a macro because we want the CURRENT function - not a sub-function
-#define GET_CONTEXT(c) \
-	do { \
-		ZeroMemory(&c, sizeof(c)); \
-		c.ContextFlags = CONTEXT_CONTROL; \
-		c.Eip = GetEIP(); \
-		c.Esp = GetESP(); \
-		c.Ebp = GetEBP(); \
-	} while(0)
-
-void FillStackFrame(STACKFRAME64& stack_frame, const CONTEXT& context) {
-	stack_frame.AddrPC.Mode = AddrModeFlat;
-	stack_frame.AddrPC.Offset = context.Eip;
-	stack_frame.AddrStack.Mode = AddrModeFlat;
-	stack_frame.AddrStack.Offset = context.Esp;
-	stack_frame.AddrFrame.Mode = AddrModeFlat;
-	stack_frame.AddrFrame.Offset = context.Ebp;
-}
-
-#define IMAGE_FILE_MACHINE_CURRENT IMAGE_FILE_MACHINE_I386
-// x86
-#else
-#error Unsupported Architecture
-#endif
-
-#pragma endregion ContextGetter
-
+constexpr size_t SIZE_PAGE = 4096;
+constexpr size_t BUFFER_SIZE = 1024;
 
 // Allocator initialization assistance
 static int nurgleCounter;
 static std::aligned_storage<sizeof(Nurgle), alignof(Nurgle)>::type nurgleBuf;
 Nurgle& nurgle = reinterpret_cast<Nurgle&>(nurgleBuf);
 
+
 // Logging constants
 constexpr auto DEBUG_LOG_FILE = "DebugLog.csv";
 constexpr auto DEBUG_LOG_HEADER = "Message, File, Line, Bytes, Address, Additional Info";
 
+
 Nurgle::Nurgle()
 {
-	// Initialize symbol read options
-	SymSetOptions(SymGetOptions() | SYMOPT_LOAD_LINES);
-	SymInitialize(GetCurrentProcess(), nullptr, true);
 }
 
-// Symbol info for reading line/function data of where error was found
-struct SymbolInfo
+
+void GetSymbolsFromAddress(void* address, SymbolInfo& symRef)
 {
-	Basic_String fileName;
-	Basic_String functionName;
-	int lineNumber = 0;
-};
+    // Get name of the file trace
+    char** strings = backtrace_symbols(&address, 1);
+    if (strings == nullptr) return;
+    Basic_String traceInfo(strings[0]);
+    free(strings);
 
-void GetSymbolsFromAddress(DWORD64 address, SymbolInfo& symRef)
-{
-	// Get line from calling address
-	DWORD displacement;
-	IMAGEHLP_LINE line = { 0 };
-	line.SizeOfStruct = sizeof(IMAGEHLP_LINE);
-	BOOL result = SymGetLineFromAddr(GetCurrentProcess(), address, &displacement, &line);
+    char offset[BUFFER_SIZE] = {0};
+    // Find the offset bytes that is inside traceInfo
+    size_t offsetStart = traceInfo.find('[');
+    size_t offsetEnd = traceInfo.find(']', offsetStart);
+    memcpy(offset, &traceInfo[offsetStart + 1], offsetEnd - offsetStart - 1);
 
-	if (result)
-	{
-		// Update symbol
-		symRef.lineNumber = line.LineNumber;
-		symRef.fileName = line.FileName;
-	}
-	
-	// Find the symbol name
-	// This weird structure allows the SYMBOL_INFO to store a string of a user
-	// defined maximum length without requiring any allocations or additional pointers
-	struct {
-		SYMBOL_INFO symbol_info;
-		char buffer[MAX_PATH];
-	} symbol = { 0 };
+    int p = 0;
+    while(traceInfo[p] != '(' && traceInfo[p] != ' ' && traceInfo[p] != 0) {
+        ++p;
+    }
+    char syscom[BUFFER_SIZE];
 
+    // Get all of the associated data from the addr2line
+    sprintf(syscom,"addr2line -f -a -C -e %.*s %s", p, traceInfo.c_str(), offset);
 
-	// Maximum size of the path length of the file
-	constexpr unsigned MAX_PATH_LENGTH = 260;
-	
-	symbol.symbol_info.SizeOfStruct = sizeof(SYMBOL_INFO);
-	symbol.symbol_info.MaxNameLen = MAX_PATH_LENGTH;
-	DWORD64 symbol_offset = 0;
-	result = SymFromAddr(GetCurrentProcess(), address, &symbol_offset, &symbol.symbol_info);
+    FILE* fp = popen(syscom, "r");
+    if (!fp) {
+        return;
+    }
 
-	if (result)
-	{
-		symRef.functionName = symbol.symbol_info.Name;
-	}
+    Basic_String info;
+    char path[BUFFER_SIZE] = {0};
+
+    /* Read the output a line at a time. */
+    while (fgets(path, BUFFER_SIZE, fp) != NULL) {
+        info += Basic_String(path);
+        memset(path, 0, BUFFER_SIZE * sizeof(char));
+    }
+
+    // Prepare for reading in and delimiting by newlines
+    char infoBuf[BUFFER_SIZE];
+    sprintf(infoBuf, "%s", info.c_str());
+
+    // First token is function address
+    char* token = strtok(infoBuf, "\n");
+
+    // Second is function name
+    token = strtok(NULL, "\n");
+    symRef.functionName = token;
+    // Third is file path in its entirety
+    token = strtok(NULL, "\n");
+
+    // Find second to last slash for one directory up, as in the MSVC version
+    char* lastSlash = strrchr(token, '/');
+    char temp = lastSlash[0];
+    lastSlash[0] = '\0';
+    char* secondToLastSlash = strrchr(token, '/');
+    lastSlash[0] = temp;
+
+    char* end = token +  strlen(token);
+    char* colon = std::find(token, end, ':');
+    // Split by the colon
+    colon[0] = '\0';
+    // Last slash to colon is file name
+    symRef.fileName = secondToLastSlash + 1;
+    char* lineNum = colon + 1;
+    // past that its line number
+    symRef.lineNumber = atoi(lineNum);
+
+    /* close */
+    pclose(fp);
 }
 
 // Log all of the leaks found on destruction
 void Nurgle::LogLeaks()
 {
-	FILE* fp = nullptr;
-	fopen_s(&fp, DEBUG_LOG_FILE, "w+");
+	FILE* fp = fopen(DEBUG_LOG_FILE, "w+");
 	if (fp == nullptr) return;
 
 	fprintf(fp, DEBUG_LOG_HEADER);
@@ -155,7 +119,7 @@ void Nurgle::LogLeaks()
 
 	for (const auto& alloc : mAllocated)
 	{
-		GetSymbolsFromAddress(alloc.second.callingFunctionAddress, symbolInfo);
+        GetSymbolsFromAddress(alloc.second.callingFunctionAddress, symbolInfo);
 		Basic_String fileName = symbolInfo.fileName;
 		Basic_String strippedFileName = fileName.substr(fileName.substr(0, fileName.find_last_of("\\")).find_last_of("\\") + 1);
 		
@@ -166,9 +130,9 @@ void Nurgle::LogLeaks()
 		// Line number
 		fprintf(fp, "%d, ", symbolInfo.lineNumber);
 		// Allocation size
-		fprintf(fp, "%llu, ", alloc.second.size);
+		fprintf(fp, "%zu, ", alloc.second.size);
 		// Allocation address
-		fprintf(fp, "0x%p, ", alloc.second.address);
+		fprintf(fp, "%p, ", alloc.second.address);
 		// Function name
 		fprintf(fp, "Function Name: %s", symbolInfo.functionName.c_str());
 		fprintf(fp, "\n");
@@ -189,45 +153,23 @@ Nurgle::~Nurgle()
 	// Free all data
 	for (const auto& deallocation : mDeallocated)
 	{
-		VirtualFree(deallocation.pageBase, 0, MEM_RELEASE);
-		VirtualFree(deallocation.pageOverflow, 0, MEM_RELEASE);
+		munmap(deallocation.pageBase, deallocation.pageBaseSize);
+		munmap(deallocation.pageOverflow, SIZE_PAGE);
 	}
 	mDeallocated.clear();
 }
 
 
-size_t GetCallingFunctionAddress(unsigned backtraceDepth)
+void* GetCallingFunctionAddress(const int backtraceDepth)
 {
-	// Get context and fill stack frame
-	CONTEXT context;
-	GET_CONTEXT(context);
-
-	STACKFRAME64 stack_frame = { 0 };
-	FillStackFrame(stack_frame, context);
-
-	// Find calling function by walking up the stack by depth amount
-	for (unsigned i = 0; i < backtraceDepth; ++i)
-	{
-		StackWalk64(
-			IMAGE_FILE_MACHINE_CURRENT, // IMAGE_FILE_MACHINE_I386 or IMAGE_FILE_MACHINE_AMD64
-			GetCurrentProcess(), // Process
-			GetCurrentThread(), // Thread
-			&stack_frame, // Stack Frame Information
-			(PVOID)&context, // Thread Context Information
-			NULL, // Read Memory Call Back (Not Used)
-			SymFunctionTableAccess64, // Function Table Accessor
-			SymGetModuleBase64, // Module Base Accessor
-			NULL // Address Translator (Not Used)
-		);
-	}
-
-	return static_cast<size_t>(stack_frame.AddrPC.Offset);
+    return __builtin_return_address(0);
 }
 
 
 void* Nurgle::Allocate(size_t size, Allocation::TYPE allocationType = Allocation::TYPE::SCALAR, bool throwException = false)
 {
-	if (size >= static_cast<size_t>(std::numeric_limits<long long>::max()))
+    // Match signed version of size_t
+	if (size >= std::numeric_limits<size_t>::max() / 2)
 	{
 		// Size greater than acceptable allocation limit
 		if (throwException)
@@ -236,16 +178,20 @@ void* Nurgle::Allocate(size_t size, Allocation::TYPE allocationType = Allocation
 		return nullptr;
 	}
 
-	constexpr size_t SIZE_PAGE = 4096;
 	// Fit the number of pages to the requested size, ceiling of the fractional value
 	const size_t numPages = (size / SIZE_PAGE) + 1llu;
 
-	void* basePtr = VirtualAlloc(nullptr, numPages * SIZE_PAGE, 
-		MEM_COMMIT, PAGE_READWRITE);
+	void* basePtr = mmap(0, numPages * (SIZE_PAGE + 1),
+		PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (basePtr == (void*)(-1))
+    {
+	    printf("mmap error: %s \n", strerror(errno));
+	    fflush(stdout);
+    }
 	char* byteAddr = static_cast<char*>(basePtr);
 	// Allocate single extra page for overflow
-	void* overflowPtr = VirtualAlloc(static_cast<void*>(byteAddr + (numPages * SIZE_PAGE)),
-		SIZE_PAGE, MEM_RESERVE, PAGE_NOACCESS);
+	void* overflowPtr = static_cast<void*>(byteAddr + (numPages * SIZE_PAGE));
+	mprotect(overflowPtr, SIZE_PAGE, PROT_NONE);
 	void* clientPtr = byteAddr + (numPages * SIZE_PAGE) - size;
 
 	Allocation alloc;
@@ -256,9 +202,7 @@ void* Nurgle::Allocate(size_t size, Allocation::TYPE allocationType = Allocation
 	alloc.pageOverflow = overflowPtr;
 	alloc.allocationType = allocationType;
 
-	// number of hops up the call stack to where it was originally called
-	constexpr auto BACKTRACE_DEPTH = 4u;
-	alloc.callingFunctionAddress = GetCallingFunctionAddress(BACKTRACE_DEPTH);
+	alloc.callingFunctionAddress = __builtin_return_address(1);
 
 	nurgle.mAllocated[clientPtr] = alloc;
 	return clientPtr;
@@ -286,7 +230,7 @@ void Nurgle::Deallocate(void* address, Allocation::TYPE allocationType = Allocat
 	Allocation allocation = (*allocIter).second;
 
 	// Decommit the allocated pages (not the overflow page)
-	VirtualFree(allocation.pageBase, 0, MEM_DECOMMIT);
+	munmap(allocation.pageBase, allocation.pageBaseSize);
 	mDeallocated.emplace_back(allocation);
 	mAllocated.erase(address);
 }
