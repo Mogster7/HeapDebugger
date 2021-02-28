@@ -2,9 +2,9 @@
 
 ## Compilers  
 - Cover which compilers your application targets
-    - [ ] gcc [version]  
-    - [ ] clang [version]  
-    - [x] msvc/Visual Studio [version]  
+    - [x] gcc
+    - [x] clang
+    - [x] msvc/Visual Studio
     
 
 ## Integration  
@@ -12,8 +12,17 @@ Integration in this project should be a matter of including MemoryDebugger.h/cpp
 Variants of operator new and delete are overloaded, thereby allowing the memory debugger
 to take control of most instantiations by the client. The memory debugger will track client allocations and report memory leaks, as well as detect memory overflows by flagging neighboring memory as restricted.
 
+------
+
+
 ## Requirements  
+MSVC:
+
 dbghelp.lib will need to be linked to the project in addition to compiling the MemoryDebugger.h/cpp as part of your program.
+
+Clang / GCC:
+
+No additional libraries need to be linked to function.
 
 ## Output  
 A file called "DebugLog.csv" contains details about the output, including the following headers: Message, File, Line, Bytes, Address, Additional Info .
@@ -34,6 +43,16 @@ This was aided by the examples in the GitHub.
 
 Aligning the Virtual Alloc and getting it to conform correctly.
 
+------
+
+Had a long time figuring out the issue where the delimiters in Clang / GCC were different,  
+as they would give different results from backtrace_symbols.
+Got a ton of non-descript errors after using mmap incorrectly, but mprotect saved the day.
+
+Tried to integrate Backward... after a lot of pain and suffering managed to do so, but  
+unfortunately it uses std::string and std::vector, so it's not compatible for use with the heap debugger.
+
+
 ### How many hours the project took you:
 
-~8
+~12

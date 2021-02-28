@@ -5,7 +5,7 @@
 // IE: project2.exe 5
 int main(int argc, char *argv[])
 {
-	int scenario = 0; // Or change this line to pick a scenario
+	int scenario = 1; // Or change this line to pick a scenario
 
 	// Test Harness
 	//======== BEGIN: DO NOT MODIFY THE FOLLOWING LINES =========//
